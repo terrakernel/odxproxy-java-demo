@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "java",
+      "name": "Run Main (with ODX env)",
+      "request": "launch",
+      "mainClass": "com.terrakernel.odx.Main",
+      "projectName": "odxproxy-java-demo",
+      "env": {
+        "ODOO_BASE_URL": "odoo_base_url",
+        "ODOO_DB": "db_name",
+        "ODOO_API_KEY": "odoo_api",
+        "ODX_API_KEY": "odx_api"
+      }
+    }
+  ]
+}
