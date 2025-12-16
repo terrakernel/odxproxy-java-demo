@@ -17,9 +17,9 @@ import kotlinx.serialization.json.JsonPrimitive;
 import kotlinx.serialization.json.JsonArray;
 
 // Service Layer: Handles ODXProxy communication and data mapping
-public class OdxPartnerClient {
+public class OdxClient {
 
-    public OdxPartnerClient() {
+    public OdxClient() {
         // Initialization logic moved here. Reads environment variables.
         String odooUrl = System.getenv("ODOO_BASE_URL");
         String odooDB = System.getenv("ODOO_DB");
@@ -37,6 +37,7 @@ public class OdxPartnerClient {
         }
     }
 
+    /* PARTNER */
     // Public method that returns a Future with a clean List of Partner objects
     public CompletableFuture<List<Partner>> fetchPartners() {
         // --- Request Setup ---
@@ -119,6 +120,77 @@ public class OdxPartnerClient {
         // Rank fields
         p.isCustomer = Integer.parseInt(safeGet.apply("customer_rank")) > 0;
         p.isSupplier = Integer.parseInt(safeGet.apply("supplier_rank")) > 0;
+
+        return p;
+    }
+
+    /* PRODUCT */
+    public CompletableFuture<List<Product>> fetchProducts() {
+        // --- Request Setup ---
+        List<Integer> allowedCompanies = List.of(1);
+        OdxClientRequestContext requestContext = new OdxClientRequestContext(
+             allowedCompanies, 1, "Asia/Jakarta", "en_US"
+        );
+        
+        List<String> fields = List.of("id", "name", "list_price", "default_code", "qty_available");
+        Integer limit = 20;
+        
+        OdxClientKeywordRequest keywords = new OdxClientKeywordRequest(
+            fields, null, limit, 0, requestContext
+        );
+
+        // --- Execute and Map ---
+        CompletableFuture<OdxServerResponse<List<JsonElement>>> futureRaw = OdxProxy.searchRead(
+            "product.product", // <<< New Odoo model
+            List.of(), 
+            keywords, 
+            null, 
+            JsonElement.class 
+        );
+
+        return futureRaw.thenApply(this::parseAndMapProductResponse);
+    }
+
+    private List<Product> parseAndMapProductResponse(OdxServerResponse<List<JsonElement>> response) {
+        if (response.getError() != null) {
+            throw new RuntimeException("ODX Server Error: " + response.getError().getMessage());
+        }
+
+        List<JsonElement> rawResults = response.getResult();
+        if (rawResults == null) {
+            return List.of();
+        }
+
+        return rawResults.stream()
+            .map(element -> (JsonObject) element)
+            .map(this::createProductFromJsonObject)
+            .collect(Collectors.toList());
+    }
+
+    private Product createProductFromJsonObject(JsonObject productJson) {
+        Product p = new Product();
+        
+        java.util.function.Function<String, String> safeGetString = key -> {
+            JsonElement el = productJson.get(key);
+            if (el != null && el instanceof JsonPrimitive) {
+                return ((JsonPrimitive) el).getContent();
+            }
+            return "";
+        };
+
+        java.util.function.Function<String, Double> safeGetDouble = key -> {
+            try {
+                return Double.parseDouble(safeGetString.apply(key));
+            } catch (NumberFormatException e) {
+                return 0.0;
+            }
+        };
+
+        p.id = (int) safeGetDouble.apply("id").doubleValue();
+        p.name = safeGetString.apply("name");
+        p.price = safeGetDouble.apply("list_price");
+        p.defaultCode = safeGetString.apply("default_code");
+        p.quantity = safeGetDouble.apply("qty_available");
 
         return p;
     }

@@ -8,10 +8,10 @@
       "mainClass": "com.terrakernel.odx.Main",
       "projectName": "odxproxy-java-demo",
       "env": {
-        "ODOO_BASE_URL": "odoo_base_url",
-        "ODOO_DB": "db_name",
-        "ODOO_API_KEY": "odoo_api",
-        "ODX_API_KEY": "odx_api"
+        "ODOO_BASE_URL": "https://edu-kti-0125.odoo.com",
+        "ODOO_DB": "edu-kti-0125",
+        "ODOO_API_KEY": "a3b0596914ac6d77d51e9cde9a9146be816b7bd8",
+        "ODX_API_KEY": "9ThdEhEMdIumAMFsmQLn885uBDWmvYsL"
       }
     }
   ]

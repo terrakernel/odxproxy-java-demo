@@ -5,12 +5,11 @@ import java.awt.*;
 import java.util.List;
 import java.util.concurrent.CompletionException;
 
-// View Layer: Handles GUI components and user interaction
-public class PartnerFrame extends JFrame {
+public class PartnerPanel extends JPanel {
     
-    private final OdxPartnerClient client;
+    private final OdxClient client;
     
-    // UI Components for the controller
+    // UI Components
     private JTextArea logArea;
     private JButton fetchButton;
     private JList<Partner> partnerList;
@@ -22,21 +21,10 @@ public class PartnerFrame extends JFrame {
     private static final String LIST_VIEW = "ListView";
     private static final String DETAIL_VIEW = "DetailView";
 
-    public PartnerFrame() {
-        super("ODXProxy Client Demo");
-        
-        // Initialize the Service layer
-        this.client = new OdxPartnerClient(); 
-        
-        // Setup the main window
-        this.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        this.setSize(600, 400);
-        this.setLayout(new BorderLayout(10, 10));
-        
-        // Build and display the UI
+    public PartnerPanel(OdxClient client) {
+        this.client = client;
+        this.setLayout(new BorderLayout());
         createUI();
-        this.setLocationRelativeTo(null);
-        this.setVisible(true);
     }
     
     private void createUI() {
@@ -44,7 +32,7 @@ public class PartnerFrame extends JFrame {
         cardLayout = new CardLayout();
         cardPanel = new JPanel(cardLayout);
 
-        // 2. Create the List View Panel (where the main list and log are)
+        // 2. Create the List View Panel
         JPanel listViewPanel = createListViewPanel();
 
         // 3. Create the Detail View Panel
@@ -54,21 +42,19 @@ public class PartnerFrame extends JFrame {
         cardPanel.add(listViewPanel, LIST_VIEW);
         cardPanel.add(detailPanel, DETAIL_VIEW);
 
-        // 5. Setup the main frame layout
-        JPanel mainPanel = new JPanel(new BorderLayout(10, 10));
-        mainPanel.add(cardPanel, BorderLayout.CENTER);
+        // 5. Add to the main panel
+        this.add(cardPanel, BorderLayout.CENTER);
         
         // Button Panel
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
-        fetchButton = new JButton("Fetch Partners (res.partner)");
+        fetchButton = new JButton("Fetch Partners");
         fetchButton.addActionListener(e -> fetchPartners());
         buttonPanel.add(fetchButton);
-        mainPanel.add(buttonPanel, BorderLayout.SOUTH);
-        
-        this.add(mainPanel);
+        this.add(buttonPanel, BorderLayout.SOUTH);
     }
     
     private JPanel createListViewPanel() {
+        // The panel that holds the list of partners and the log area
         JPanel panel = new JPanel(new BorderLayout(5, 5));
         
         logArea = new JTextArea("Click 'Fetch Partners' to begin...\n");
@@ -92,18 +78,19 @@ public class PartnerFrame extends JFrame {
     }
 
     private void fetchPartners() {
-        logArea.setText("Initiating ODXProxy request...\n");
+        logArea.setText("Initiating ODXProxy Partner request...\n");
         fetchButton.setEnabled(false);
         
-        // Call the service layer method asynchronously
+        // Call the new OdxClient service method
         client.fetchPartners()
             .thenAccept(this::handleSuccess)
             .exceptionally(this::handleFailure);
     }
-
-    // Runs on EDT (SwingUtilities.invokeLater is handled inside CompletableFuture)
+    
     private void handleSuccess(List<Partner> partners) {
+        // [PUT BACK CODE]
         SwingUtilities.invokeLater(() -> {
+            // JList model update logic
             DefaultListModel<Partner> listModel = new DefaultListModel<>();
             partners.forEach(listModel::addElement);
             partnerList.setModel(listModel);
@@ -115,38 +102,33 @@ public class PartnerFrame extends JFrame {
         });
     }
 
-    // Runs on EDT
     private Void handleFailure(Throwable t) {
+        // [PUT BACK CODE]
         SwingUtilities.invokeLater(() -> {
-            // Unwrap the CompletionException if present
             Throwable rootCause = (t instanceof CompletionException) ? t.getCause() : t;
-            logArea.append("FATAL ERROR: " + rootCause.getMessage() + "\n");
-            rootCause.printStackTrace();
+            logArea.append("FATAL PARTNER FETCH ERROR: " + rootCause.getMessage() + "\n");
             fetchButton.setEnabled(true);
         });
         return null;
     }
 
-    // --- Inner Classes for UI Components (can be moved to separate files later) ---
-
-    // Part of the View Layer: Custom Renderer
+    // --- Inner Classes (Moved to PartnerPanel scope) ---
     private static class PartnerListRenderer extends DefaultListCellRenderer {
         @Override
         public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
             super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
             if (value instanceof Partner) {
-                // Uses the Partner.toString() method, which is the name
-                setText(((Partner) value).name); 
+                setText(((Partner) value).name);
             }
             return this;
         }
     }
-
-    // Part of the View Layer: Detail Screen
+    
     private class PartnerDetailPanel extends JPanel {
         private JLabel vatLabel, streetLabel, street2Label, cityCountryLabel, phoneLabel, emailLabel;
         private JCheckBox customerCheck, supplierCheck;
-
+        
+        // [PUT BACK CODE]
         public PartnerDetailPanel() {
             setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
             setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
@@ -158,21 +140,35 @@ public class PartnerFrame extends JFrame {
             add(backButton);
             add(Box.createVerticalStrut(10));
 
-            // Initialize and add all data labels/checkboxes (removed for brevity, same as original logic)
-            // ... (All JLabel and JCheckBox initialization and adding logic here) ...
-            emailLabel = new JLabel(); phoneLabel = new JLabel(); vatLabel = new JLabel(); streetLabel = new JLabel(); street2Label = new JLabel(); cityCountryLabel = new JLabel();
-            customerCheck = new JCheckBox("Customer"); supplierCheck = new JCheckBox("Supplier");
+            // Initialize components
+            emailLabel = new JLabel();
+            phoneLabel = new JLabel();
+            vatLabel = new JLabel();
+            streetLabel = new JLabel();
+            street2Label = new JLabel();
+            cityCountryLabel = new JLabel();
             
+            // Checkboxes
+            customerCheck = new JCheckBox("Customer");
+            supplierCheck = new JCheckBox("Supplier");
+            
+            // Add components to panel
             add(new JLabel("<html><h2>Partner Details</h2></html>"));
-            add(emailLabel); add(phoneLabel); add(vatLabel);
+            add(emailLabel);
+            add(phoneLabel);
+            add(vatLabel);
             add(Box.createVerticalStrut(10));
             add(new JLabel("--- Address ---"));
-            add(streetLabel); add(street2Label); add(cityCountryLabel);
+            add(streetLabel);
+            add(street2Label);
+            add(cityCountryLabel);
             add(Box.createVerticalStrut(10));
             add(new JLabel("--- Ranks (Read-Only) ---"));
-            add(customerCheck); add(supplierCheck);
+            add(customerCheck); 
+            add(supplierCheck);
         }
 
+        // [PUT BACK CODE]
         public void displayPartner(Partner p) {
             // Update the header with the partner's name
             setBorder(BorderFactory.createTitledBorder(p.name));
