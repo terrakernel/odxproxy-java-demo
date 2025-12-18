@@ -108,6 +108,7 @@ public class POSPanel extends JPanel {
 
         checkoutButton = new JButton("Checkout");
         checkoutButton.setEnabled(false);
+        checkoutButton.addActionListener(e -> handleCheckout());
         checkoutPanel.add(checkoutButton);
        
         rightPanel.add(checkoutPanel, BorderLayout.SOUTH);
@@ -193,6 +194,26 @@ public class POSPanel extends JPanel {
                     return null;
                 });
         }
+    }
+
+    private void handleCheckout() {
+        List<Product> cart = Collections.list(cartModel.elements());
+        checkoutButton.setEnabled(false);
+        
+        client.addOrderToSession(cart)
+            .thenAccept(orderId -> SwingUtilities.invokeLater(() -> {
+                logArea.append("Order Created: #" + orderId + "\n");
+                cartModel.clear();
+                updateTotal(0.0);
+                checkoutButton.setEnabled(true);
+            }))
+            .exceptionally(t -> {
+                SwingUtilities.invokeLater(() -> {
+                    logArea.append("ORDER FAILED: " + t.getMessage() + "\n");
+                    checkoutButton.setEnabled(true);
+                });
+                return null;
+            });
     }
     
     // --- Product Fetching Logic (Moved from ProductPanel) ---

@@ -7,6 +7,8 @@ import io.odxproxy.model.OdxInstanceInfo;
 import io.odxproxy.model.OdxServerResponse;
 import io.odxproxy.model.OdxClientRequestContext;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -344,6 +346,89 @@ public class OdxClient {
                 }).thenApply(finalResp -> {
                     if (finalResp.getError() != null) throw new RuntimeException(finalResp.getError().getMessage());
                     return true; 
+                });
+        });
+    }
+
+    public CompletableFuture<Integer> addOrderToSession(List<Product> cart) {
+        if (cart == null || cart.isEmpty()) {
+            return CompletableFuture.failedFuture(new RuntimeException("Cart is empty"));
+        }
+
+        OdxClientRequestContext requestContext = new OdxClientRequestContext(
+            List.of(1), 1, "Asia/Jakarta", "en_US"
+        );
+
+        // 1. Get the session (reusing your existing method)
+        return getOpenSessionId().<Integer>thenCompose(sessionId -> {
+            if (sessionId == null) {
+                throw new RuntimeException("No open POS session. Please OPEN STORE first.");
+            }
+
+            // 2. Build the Order Lines [0, 0, {values}]
+            double total = 0;
+            List<Object> lines = new ArrayList<>();
+            
+            for (Product item : cart) {
+                double price = item.price;
+                double qty = 1.0; // Assuming qty 1 for now, or use item.quantity
+                double subtotal = price * qty;
+                total += subtotal;
+
+                Map<String, Object> lineVals = Map.of(
+                    "name", item.name,
+                    "product_id", item.id,
+                    "price_unit", price,
+                    "qty", qty,
+                    "price_subtotal", subtotal,
+                    "price_subtotal_incl", subtotal
+                );
+                lines.add(List.of(0, 0, lineVals));
+            }
+
+            // 3. Prepare the Payment (Assuming payment_method_id = 1 or fetch as needed)
+            // In Odoo POS, usually the first payment method is 'Cash'
+            int payMethodId = 1; 
+            List<Object> payments = List.of(
+                List.of(0, 0, Map.of(
+                    "amount", total, 
+                    "payment_method_id", payMethodId
+                ))
+            );
+
+            // 4. Build the full Order object
+            Map<String, Object> orderData = new HashMap<>();
+            orderData.put("session_id", sessionId);
+            orderData.put("name", "POS Order (ODXProxy Java)");
+            orderData.put("amount_tax", 0.0);
+            orderData.put("amount_total", total);
+            orderData.put("amount_paid", total);
+            orderData.put("amount_return", 0.0);
+            orderData.put("state", "paid");
+            orderData.put("lines", lines);
+            orderData.put("payment_ids", payments);
+
+            OdxClientKeywordRequest orderKeywords = new OdxClientKeywordRequest(
+                null, null, null, null, requestContext
+            );
+
+            // 5. Create the order
+            return ((CompletableFuture<OdxServerResponse<JsonElement>>) OdxProxy.create(
+                    "pos.order", 
+                    List.of(orderData), 
+                    orderKeywords, 
+                    null, 
+                    JsonElement.class
+                )).thenApply(createResp -> {
+                    if (createResp.getError() != null) throw new RuntimeException(createResp.getError().getMessage());
+
+                    // Safe ID extraction logic (handling array vs literal)
+                    JsonElement result = createResp.getResult();
+                    if (result instanceof JsonArray) {
+                        return Integer.parseInt(JsonElementKt.getJsonPrimitive(((JsonArray) result).get(0)).getContent());
+                    } else {
+                        return Integer.parseInt(JsonElementKt.getJsonPrimitive(result).getContent());
+                    }
                 });
         });
     }
