@@ -10,10 +10,17 @@ import java.util.concurrent.CompletionException;
 
 public class POSPanel extends JPanel {
     private final OdxClient client;
+
+    private Integer currentSessionId = null;
     
     // POS Cart components (Right Side)
     private DefaultListModel<Product> cartModel;
     private JLabel totalLabel;
+
+    // Session label
+    private JLabel sessionStatusLabel;
+    private JButton checkoutButton;
+    private JButton storeControlButton;
     
     // Product Selection components (Left Side)
     private JList<Product> productList;
@@ -28,6 +35,7 @@ public class POSPanel extends JPanel {
         
         // Automatically fetch products when the POS tab loads (or is created)
         fetchProducts(); 
+        checkPosSession();
     }
     
     private void createUI() {
@@ -72,10 +80,23 @@ public class POSPanel extends JPanel {
         
         splitPane.setLeftComponent(leftPanel);
 
-        // --- 2. Right Side: Cart and Total (Unchanged) ---
+        // Store Control Button
+        storeControlButton = new JButton("Open Store");
+        storeControlButton.setVisible(false); // Hidden until checkPosSession finishes
+        storeControlButton.addActionListener(e -> handleStoreControl());
+
+        // --- 2. Right Side: Cart and Total ---
         JPanel rightPanel = new JPanel(new BorderLayout());
         rightPanel.setBorder(BorderFactory.createTitledBorder("Shopping Cart"));
         
+        // --- NEW: Session Status Header for Right Side ---
+        JPanel sessionHeader = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        sessionStatusLabel = new JLabel("Checking Store Status...");
+        sessionStatusLabel.setFont(new Font("SansSerif", Font.BOLD, 12));
+        sessionHeader.add(sessionStatusLabel);
+        sessionHeader.add(storeControlButton);
+        rightPanel.add(sessionHeader, BorderLayout.NORTH); // Add to top of cart area
+
         cartModel = new DefaultListModel<>();
         JList<Product> cartList = new JList<>(cartModel);
         rightPanel.add(new JScrollPane(cartList), BorderLayout.CENTER);
@@ -85,12 +106,93 @@ public class POSPanel extends JPanel {
         totalLabel = new JLabel("Total: $0.00", SwingConstants.RIGHT);
         checkoutPanel.add(totalLabel);
 
-        JButton checkoutButton = new JButton("Checkout");
+        checkoutButton = new JButton("Checkout");
+        checkoutButton.setEnabled(false);
         checkoutPanel.add(checkoutButton);
-        
+       
         rightPanel.add(checkoutPanel, BorderLayout.SOUTH);
         
         splitPane.setRightComponent(rightPanel);
+    }
+
+    private void checkPosSession() {
+        sessionStatusLabel.setText("Checking Session...");
+        sessionStatusLabel.setForeground(Color.GRAY);
+        storeControlButton.setEnabled(false);
+
+        client.getOpenSessionId()
+            .thenAccept(sessionId -> SwingUtilities.invokeLater(() -> {
+                if (sessionId != null) {
+                    this.currentSessionId = sessionId;
+                    sessionStatusLabel.setText("● Store Open (#" + this.currentSessionId + ")");
+                    sessionStatusLabel.setForeground(new Color(0, 150, 0)); // Dark Green
+                    checkoutButton.setEnabled(true);
+                    storeControlButton.setEnabled(true);
+                    storeControlButton.setText("Close Store");
+                    storeControlButton.setVisible(true);
+                    logArea.append("POS Session #" + this.currentSessionId + " is active.\n");
+                } else {
+                    this.currentSessionId = null;
+                    sessionStatusLabel.setText("○ Store Closed");
+                    sessionStatusLabel.setForeground(Color.RED);
+                    checkoutButton.setEnabled(false);
+                    storeControlButton.setEnabled(true);
+                    storeControlButton.setText("Open Store");
+                    storeControlButton.setVisible(true);
+                    logArea.append("WARNING: No active POS Session found. Store is closed.\n");
+                }
+            }))
+            .exceptionally(t -> {
+                SwingUtilities.invokeLater(() -> {
+                    sessionStatusLabel.setText("Session Error");
+                    sessionStatusLabel.setForeground(Color.RED);
+                    logArea.append("SESSION ERROR: " + t.getMessage() + "\n");
+                });
+                return null;
+            });
+    }
+
+    private void handleStoreControl() {
+        storeControlButton.setEnabled(false);
+        
+        if (currentSessionId == null) {
+            logArea.append("Attempting to open store...\n");
+            client.openStore().thenAccept(newId -> {
+                SwingUtilities.invokeLater(() -> {
+                    logArea.append("Store Opened! Session ID: " + newId + "\n");
+                    checkPosSession(); // Refresh UI state
+                    storeControlButton.setEnabled(true);
+                });
+            }).exceptionally(t -> {
+                SwingUtilities.invokeLater(() -> {
+                    logArea.append("Open Store Failed: " + t.getMessage() + "\n");
+                    storeControlButton.setEnabled(true);
+                });
+                return null;
+            });
+        } else {
+            logArea.append("Attempting to close store...\n");
+
+            client.closeStore()
+                .thenAccept(success -> {
+                    SwingUtilities.invokeLater(() -> {
+                        logArea.append("Store closed successfully.\n");
+                        checkPosSession(); // This will flip the button back to "Open Store"
+                        storeControlButton.setEnabled(true);
+                    });
+                })
+                .exceptionally(t -> {
+                    SwingUtilities.invokeLater(() -> {
+                        // Remove the 'CompletionException' wrapper to get the real Odoo error
+                        Throwable cause = (t instanceof java.util.concurrent.CompletionException) ? t.getCause() : t;
+                        logArea.append("CLOSE FAILED: " + cause.getMessage() + "\n");
+                        
+                        // Re-enable so the user can try again after fixing the issue in Odoo
+                        storeControlButton.setEnabled(true);
+                    });
+                    return null;
+                });
+        }
     }
     
     // --- Product Fetching Logic (Moved from ProductPanel) ---
@@ -140,7 +242,7 @@ public class POSPanel extends JPanel {
         totalLabel.setText(String.format("Total: $%.2f", total));
     }
     
-    // --- Custom Renderer (Moved from ProductPanel) ---
+    // --- Custom Renderer ---
     private static class ProductListRenderer extends DefaultListCellRenderer {
         @Override
         public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus) {

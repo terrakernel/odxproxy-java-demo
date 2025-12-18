@@ -8,10 +8,12 @@ import io.odxproxy.model.OdxServerResponse;
 import io.odxproxy.model.OdxClientRequestContext;
 
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 import kotlinx.serialization.json.JsonElement;
+import kotlinx.serialization.json.JsonElementKt;
 import kotlinx.serialization.json.JsonObject;
 import kotlinx.serialization.json.JsonPrimitive;
 import kotlinx.serialization.json.JsonArray;
@@ -193,5 +195,156 @@ public class OdxClient {
         p.quantity = safeGetDouble.apply("qty_available");
 
         return p;
+    }
+
+    /* POS SESSION */
+    public CompletableFuture<Integer> getOpenSessionId() {
+        // 1. First, get the active POS Config
+        OdxClientRequestContext requestContext = new OdxClientRequestContext(
+            List.of(1), 1, "Asia/Jakarta", "en_US"
+        );
+        
+        OdxClientKeywordRequest configKeywords = new OdxClientKeywordRequest(
+            List.of("id"), null, 1, 0, requestContext
+        );
+
+        return OdxProxy.searchRead("pos.config", 
+            List.of(List.of(List.of("active", "=",true))), 
+            configKeywords, null, JsonElement.class
+        ).thenCompose(configResp -> {
+            if (configResp.getError() != null) throw new RuntimeException(configResp.getError().getMessage());
+            
+            List<JsonElement> configResults = configResp.getResult();
+            if (configResults == null || configResults.isEmpty()) throw new RuntimeException("No active POS Config");
+            
+            int configId = Integer.parseInt(JsonElementKt.getJsonPrimitive(((JsonObject) configResults.get(0)).get("id")).getContent());
+
+            // 2. Now search for an open session for this config
+            OdxClientKeywordRequest sessionKeywords = new OdxClientKeywordRequest(
+                List.of("id", "state"), "id desc", 1, 0, requestContext
+            );
+
+            List<List<Object>> sessionDomain = List.of(List.of(
+                List.of("config_id", "=", configId),
+                List.of("state", "in", List.of("opened", "opening_control"))
+            ));
+
+            return OdxProxy.searchRead("pos.session", sessionDomain, sessionKeywords, null, JsonElement.class);
+        }).thenCompose(sessionResp -> {
+            List<JsonElement> sessionResults = sessionResp.getResult();
+            if (sessionResults == null || sessionResults.isEmpty()) return CompletableFuture.completedFuture(null);
+
+            JsonObject sessionJson = (JsonObject) sessionResults.get(0);
+            int sid = Integer.parseInt(JsonElementKt.getJsonPrimitive(sessionJson.get("id")).getContent());
+            String state = JsonElementKt.getJsonPrimitive(sessionJson.get("state")).getContent();
+
+            // If in 'opening_control', we trigger the open action
+            if (state.equals("opening_control")) {
+                OdxClientKeywordRequest sessionKeywords2 = new OdxClientKeywordRequest(
+                    null, null, null, null, requestContext
+                );
+
+                System.out.println(sessionKeywords2);
+                return OdxProxy.callMethod("pos.session", "action_pos_session_open", 
+                    List.of(sid), sessionKeywords2, null, JsonElement.class)
+                    .thenApply(r -> sid);
+            }
+            return CompletableFuture.completedFuture(sid);
+        });
+    }
+
+    public CompletableFuture<Integer> openStore() {
+        OdxClientRequestContext requestContext = new OdxClientRequestContext(
+            List.of(1), 1, "Asia/Jakarta", "en_US"
+        );
+
+        return getOpenSessionId().thenCompose(existingSid -> {
+            if (existingSid != null) {
+                return CompletableFuture.completedFuture(existingSid);
+            }
+
+            // 1. Get Config ID
+            OdxClientKeywordRequest configKeywords = new OdxClientKeywordRequest(
+                List.of("id"), null, 1, 0, requestContext
+            );
+
+            return OdxProxy.searchRead("pos.config", 
+                List.of(List.of(List.of("active", "=", true))), 
+                configKeywords, null, JsonElement.class
+            ).thenCompose(configResp -> {
+                if (configResp.getError() != null) throw new RuntimeException(configResp.getError().getMessage());
+                
+                int configId = Integer.parseInt(JsonElementKt.getJsonPrimitive(
+                    ((JsonObject) configResp.getResult().get(0)).get("id")).getContent());
+
+                // 2. Create the session
+                Map<String, Object> sessionData = Map.of(
+                    "config_id", configId,
+                    "name", "POS Session (ODXProxy Java)"
+                );
+
+                OdxClientKeywordRequest sessionKeywords3 = new OdxClientKeywordRequest(
+                    null, null, null, null, requestContext
+                );
+                
+                return (CompletableFuture<OdxServerResponse<JsonElement>>) OdxProxy.create(
+                    "pos.session", List.of(sessionData), sessionKeywords3, null, JsonElement.class);
+                    
+            }).thenCompose(createResp -> {
+                if (createResp.getError() != null) throw new RuntimeException(createResp.getError().getMessage());
+                
+                // --- FIXED SECTION: Safe ID Extraction ---
+                JsonElement result = createResp.getResult();
+                int newSid;
+                
+                if (result instanceof JsonArray) {
+                    // If Odoo returns [id]
+                    newSid = Integer.parseInt(JsonElementKt.getJsonPrimitive(((JsonArray) result).get(0)).getContent());
+                } else {
+                    // If Odoo/ODX returns just the id (JsonLiteral/JsonPrimitive)
+                    newSid = Integer.parseInt(JsonElementKt.getJsonPrimitive(result).getContent());
+                }
+                // ------------------------------------------
+
+                // 3. Open the session
+                OdxClientKeywordRequest callKeywords = new OdxClientKeywordRequest(null, null, null, null, requestContext);
+                return OdxProxy.callMethod("pos.session", "action_pos_session_open", 
+                    List.of(newSid), callKeywords, null, JsonElement.class)
+                    .thenApply(r -> newSid);
+            });
+        });
+    }
+
+    public CompletableFuture<Boolean> closeStore() {
+        OdxClientRequestContext requestContext = new OdxClientRequestContext(
+            List.of(1), 1, "Asia/Jakarta", "en_US"
+        );
+
+        return getOpenSessionId().<Boolean>thenCompose(sid -> {
+            if (sid == null) throw new RuntimeException("No open POS session to close.");
+
+            Map<String, Object> values = Map.of("state", "closing_control");
+            OdxClientKeywordRequest sessionKeywords4 = new OdxClientKeywordRequest(
+                null, null, null, null, requestContext
+            );
+
+            // REMOVE JsonElement.class and change cast to Boolean
+            return ((CompletableFuture<OdxServerResponse<Boolean>>) OdxProxy.write(
+                    "pos.session", 
+                    List.of(sid), 
+                    values, 
+                    sessionKeywords4, 
+                    null // Removed JsonElement.class here
+                )).thenCompose(writeResp -> {
+                    if (writeResp.getError() != null) throw new RuntimeException(writeResp.getError().getMessage());
+
+                    // callMethod IS generic, so it still needs JsonElement.class
+                    return OdxProxy.callMethod("pos.session", "action_pos_session_closing_control", 
+                        List.of(sid), sessionKeywords4, null, JsonElement.class);
+                }).thenApply(finalResp -> {
+                    if (finalResp.getError() != null) throw new RuntimeException(finalResp.getError().getMessage());
+                    return true; 
+                });
+        });
     }
 }
